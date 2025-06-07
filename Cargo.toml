@@ -17,3 +17,10 @@ toml = "0.8"
 r2d2 = "0.8"
 r2d2_sqlite = "0.28"
 url = "2.5.4"
+
+[dev-dependencies]
+ndarray = { version = "0.16" }
+rand = { version = "0.9" }
+opendal = { version = "0.53", features = ["services-s3"] }
+zarrs = { version = "0.20", features = ["zstd", "async"] }
+zarrs_opendal = { version = "0.7" }

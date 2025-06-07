@@ -1,0 +1,8 @@
+bind_address = "127.0.0.1"
+port = 8080
+buckets = ["test"]
+database_path = "database.sqlite"
+max_workers = 2
+max_object_size = 104857600       # 100 MB, adjust as needed, default to 1 MB
+log_path = "log.txt"
+log_level = "info"
