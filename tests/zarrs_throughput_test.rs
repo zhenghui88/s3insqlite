@@ -27,13 +27,10 @@ async fn benchmark_write(
     shape: (usize, usize),
     count: usize,
 ) -> f64 {
-    println!(
-        "Starting Zarr write benchmark: {} arrays of shape {:?}",
-        count, shape
-    );
+    println!("Starting Zarr write benchmark: {count} arrays of shape {shape:?}",);
     let start = Instant::now();
     for i in 0..count {
-        let array_path = format!("/array_{:05}", i);
+        let array_path = format!("/array_{i:05}");
         let data = random_array(shape);
 
         let array = ArrayBuilder::new(
@@ -63,7 +60,7 @@ async fn benchmark_write(
     let elapsed = start.elapsed().as_secs_f64();
     let array_bytes = (shape.0 * shape.1 * std::mem::size_of::<f32>()) as f64;
     let mb_total = (array_bytes * count as f64) / (1024.0 * 1024.0);
-    println!("Write benchmark finished in {:.2} seconds", elapsed);
+    println!("Write benchmark finished in {elapsed:.2} seconds");
     println!(
         "Write throughput: {:.2} MB/s, {:.2} arrays/s",
         mb_total / elapsed,
@@ -77,13 +74,10 @@ async fn benchmark_read(
     shape: (usize, usize),
     count: usize,
 ) -> f64 {
-    println!(
-        "Starting Zarr read benchmark: {} arrays of shape {:?}",
-        count, shape
-    );
+    println!("Starting Zarr read benchmark: {count} arrays of shape {shape:?}",);
     let start = Instant::now();
     for i in 0..count {
-        let array_path = format!("/array_{:05}", i);
+        let array_path = format!("/array_{i:05}");
 
         let array = zarrs::array::Array::async_open(store.clone(), &array_path)
             .await
@@ -101,8 +95,7 @@ async fn benchmark_read(
         assert_eq!(
             read_data.shape(),
             &[shape.0, shape.1],
-            "Shape mismatch for {}",
-            array_path
+            "Shape mismatch for {array_path}",
         );
 
         if (i + 1) % 100 == 0 {
@@ -112,7 +105,7 @@ async fn benchmark_read(
     let elapsed = start.elapsed().as_secs_f64();
     let array_bytes = (shape.0 * shape.1 * std::mem::size_of::<f32>()) as f64;
     let mb_total = (array_bytes * count as f64) / (1024.0 * 1024.0);
-    println!("Read benchmark finished in {:.2} seconds", elapsed);
+    println!("Read benchmark finished in {elapsed:.2} seconds");
     println!(
         "Read throughput: {:.2} MB/s, {:.2} arrays/s",
         mb_total / elapsed,
@@ -146,12 +139,6 @@ async fn zarrs_throughput_benchmark() {
     let read_time = benchmark_read(&store, ARRAY_SHAPE, ARRAY_COUNT).await;
 
     println!("\nBenchmark summary:");
-    println!(
-        "  Write: {} arrays x {:?} in {:.2}s",
-        ARRAY_COUNT, ARRAY_SHAPE, write_time
-    );
-    println!(
-        "  Read:  {} arrays x {:?} in {:.2}s",
-        ARRAY_COUNT, ARRAY_SHAPE, read_time
-    );
+    println!("  Write: {ARRAY_COUNT} arrays x {ARRAY_SHAPE:?} in {write_time:.2}s",);
+    println!("  Read:  {ARRAY_COUNT} arrays x {ARRAY_SHAPE:?} in {read_time:.2}s",);
 }

@@ -37,7 +37,7 @@ async fn test_connection() {
     op.write(&object_key, random_content.clone())
         .await
         .expect("failed to upload file");
-    println!("Uploaded object: {}", object_key);
+    println!("Uploaded object: {object_key}");
 
     // --- Read (download) the file ---
     let downloaded_bytes = op.read(&object_key).await.expect("failed to download file");
@@ -55,5 +55,5 @@ async fn test_connection() {
     op.delete(&object_key)
         .await
         .expect("failed to delete object");
-    println!("Deleted object: {}", object_key);
+    println!("Deleted object: {object_key}");
 }

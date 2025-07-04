@@ -25,7 +25,7 @@ async fn list_buckets(data: web::Data<AppState>) -> HttpResponse {
     let mut xml = String::from(r#"<?xml version="1.0" encoding="UTF-8"?>"#);
     xml.push_str("\n<ListAllMyBucketsResult>\n   <Buckets>");
     for bucket in &data.buckets {
-        xml.push_str(&format!("\n<Bucket>\n<Name>{}</Name>\n</Bucket>", bucket));
+        xml.push_str(&format!("\n<Bucket>\n<Name>{bucket}</Name>\n</Bucket>"));
     }
     xml.push_str("\n   </Buckets>\n</ListAllMyBucketsResult>");
     HttpResponse::Ok().content_type("application/xml").body(xml)
@@ -42,7 +42,7 @@ fn sanitize_bucket_name(bucket: &str) -> Option<String> {
     {
         return None;
     }
-    Some(format!("bucket_{}", bucket))
+    Some(format!("bucket_{bucket}"))
 }
 
 #[derive(Debug, Deserialize)]
@@ -91,27 +91,23 @@ async fn upload_object(
         Err(resp) => return resp,
     };
 
-    info!("Uploading object '{}' to bucket '{}'", key, bucket);
+    info!("Uploading object '{key}' to bucket '{bucket}'");
     let pool = &data.db_pool;
     let conn = pool.get().unwrap();
     if let Some(table_name) = sanitize_bucket_name(&bucket) {
         let sql = format!(
-            "INSERT INTO {} (key, data) VALUES (?1, ?2)
+            "INSERT INTO {table_name} (key, data) VALUES (?1, ?2)
              ON CONFLICT(key) DO UPDATE SET data=excluded.data",
-            table_name
         );
         match conn.execute(&sql, params![key, &body[..]]) {
             Ok(_) => {
-                info!("Object '{}' uploaded to bucket '{}'", key, bucket);
+                info!("Object '{key}' uploaded to bucket '{bucket}'");
                 // S3: 200 OK, no body required
                 HttpResponse::Ok().finish()
             }
             Err(e) => {
-                error!(
-                    "Failed to upload object '{}' to bucket '{}': {}",
-                    key, bucket, e
-                );
-                let body = format!("Error: {}", e);
+                error!("Failed to upload object '{key}' to bucket '{bucket}': {e}",);
+                let body = format!("Error: {e}");
                 HttpResponse::InternalServerError()
                     .content_type("text/plain")
                     .insert_header(("Content-Length", body.len().to_string()))
@@ -119,7 +115,7 @@ async fn upload_object(
             }
         }
     } else {
-        warn!("Invalid bucket name attempted: {}", bucket);
+        warn!("Invalid bucket name attempted: {bucket}");
         let body = "Invalid bucket name";
         HttpResponse::BadRequest()
             .content_type("text/plain")
@@ -133,7 +129,7 @@ async fn download_object(
     path: web::Path<(String, String)>,
 ) -> impl Responder {
     let (bucket, key) = path.into_inner();
-    info!("Downloading object '{}' from bucket '{}'", key, bucket);
+    info!("Downloading object '{key}' from bucket '{bucket}'");
     let bucket = match validate_bucket(&bucket, &data) {
         Ok(b) => b,
         Err(resp) => return resp,
@@ -142,7 +138,7 @@ async fn download_object(
     let pool = &data.db_pool;
     let conn = pool.get().unwrap();
     if let Some(table_name) = sanitize_bucket_name(&bucket) {
-        let sql = format!("SELECT data FROM {} WHERE key = ?1", table_name);
+        let sql = format!("SELECT data FROM {table_name} WHERE key = ?1");
         match conn.query_row(&sql, params![key], |row| row.get::<_, Vec<u8>>(0)) {
             Ok(data) => HttpResponse::Ok()
                 .content_type("application/octet-stream")
@@ -156,11 +152,8 @@ async fn download_object(
                     .body(body)
             }
             Err(e) => {
-                error!(
-                    "Failed to download object '{}' from bucket '{}': {}",
-                    key, bucket, e
-                );
-                let body = format!("Error: {}", e);
+                error!("Failed to download object '{key}' from bucket '{bucket}': {e}",);
+                let body = format!("Error: {e}");
                 HttpResponse::InternalServerError()
                     .content_type("text/plain")
                     .insert_header(("Content-Length", body.len().to_string()))
@@ -168,7 +161,7 @@ async fn download_object(
             }
         }
     } else {
-        warn!("Invalid bucket name attempted: {}", bucket);
+        warn!("Invalid bucket name attempted: {bucket}");
         let body = "Invalid bucket name";
         HttpResponse::BadRequest()
             .content_type("text/plain")
@@ -182,7 +175,7 @@ async fn delete_object(
     path: web::Path<(String, String)>,
 ) -> impl Responder {
     let (bucket, key) = path.into_inner();
-    info!("Deleting object '{}' from bucket '{}'", key, bucket);
+    info!("Deleting object '{key}' from bucket '{bucket}'",);
     let bucket = match validate_bucket(&bucket, &data) {
         Ok(b) => b,
         Err(resp) => return resp,
@@ -191,7 +184,7 @@ async fn delete_object(
     let pool = &data.db_pool;
     let conn = pool.get().unwrap();
     if let Some(table_name) = sanitize_bucket_name(&bucket) {
-        let sql = format!("DELETE FROM {} WHERE key = ?1", table_name);
+        let sql = format!("DELETE FROM {table_name} WHERE key = ?1");
         match conn.execute(&sql, params![key]) {
             Ok(affected) => {
                 if affected == 0 {
@@ -205,11 +198,8 @@ async fn delete_object(
                 }
             }
             Err(e) => {
-                error!(
-                    "Failed to delete object '{}' from bucket '{}': {}",
-                    key, bucket, e
-                );
-                let body = format!("Error: {}", e);
+                error!("Failed to delete object '{key}' from bucket '{bucket}': {e}",);
+                let body = format!("Error: {e}");
                 HttpResponse::InternalServerError()
                     .content_type("text/plain")
                     .insert_header(("Content-Length", body.len().to_string()))
@@ -217,7 +207,7 @@ async fn delete_object(
             }
         }
     } else {
-        warn!("Invalid bucket name attempted: {}", bucket);
+        warn!("Invalid bucket name attempted: {bucket}");
         let body = "Invalid bucket name";
         HttpResponse::BadRequest()
             .content_type("text/plain")
@@ -236,11 +226,11 @@ async fn head_object(
         Err(resp) => return resp,
     };
 
-    info!("HEAD object '{}' from bucket '{}'", key, bucket);
+    info!("HEAD object '{key}' from bucket '{bucket}'",);
     let pool = &data.db_pool;
     let conn = pool.get().unwrap();
     if let Some(table_name) = sanitize_bucket_name(&bucket) {
-        let sql = format!("SELECT LENGTH(data) FROM {} WHERE key = ?1", table_name);
+        let sql = format!("SELECT LENGTH(data) FROM {table_name} WHERE key = ?1");
         match conn.query_row(&sql, params![key], |row| row.get::<_, Option<i64>>(0)) {
             Ok(Some(len)) => HttpResponse::Ok()
                 .insert_header(("Content-Length", len.to_string()))
@@ -253,11 +243,8 @@ async fn head_object(
                     .body(body)
             }
             Err(e) => {
-                error!(
-                    "Failed to head object '{}' from bucket '{}': {}",
-                    key, bucket, e
-                );
-                let body = format!("Error: {}", e);
+                error!("Failed to head object '{key}' from bucket '{bucket}': {e}",);
+                let body = format!("Error: {e}");
                 HttpResponse::InternalServerError()
                     .content_type("text/plain")
                     .insert_header(("Content-Length", body.len().to_string()))
@@ -265,7 +252,7 @@ async fn head_object(
             }
         }
     } else {
-        warn!("Invalid bucket name attempted: {}", bucket);
+        warn!("Invalid bucket name attempted: {bucket}");
         let body = "Invalid bucket name";
         HttpResponse::BadRequest()
             .content_type("text/plain")
@@ -280,7 +267,7 @@ async fn get_bucket_versioning(data: web::Data<AppState>, path: web::Path<String
         Ok(b) => b,
         Err(resp) => return resp,
     };
-    info!("GetBucketVersioning for bucket '{}'", bucket);
+    info!("GetBucketVersioning for bucket '{bucket}'");
     let xml = r#"<?xml version=\"1.0\" encoding=\"UTF-8\"?>
 <VersioningConfiguration>
    <Status>Suspended</Status>
@@ -334,7 +321,7 @@ async fn list_objects_v2(
     let conn = match pool.get() {
         Ok(c) => c,
         Err(e) => {
-            let body = format!("Error: {}", e);
+            let body = format!("Error: {e}");
             return HttpResponse::InternalServerError()
                 .content_type("text/plain")
                 .insert_header(("Content-Length", body.len().to_string()))
@@ -355,8 +342,7 @@ async fn list_objects_v2(
 
     // Build SQL query for keys and last_modified
     let sql = format!(
-        "SELECT key, length(data), last_modified FROM {} WHERE key LIKE ?1 ORDER BY key ASC",
-        table_name
+        "SELECT key, length(data), last_modified FROM {table_name} WHERE key LIKE ?1 ORDER BY key ASC",
     );
     let sql_params: Vec<String> = vec![format!(
         "{}%",
@@ -369,7 +355,7 @@ async fn list_objects_v2(
     let mut stmt = match conn.prepare(&sql) {
         Ok(s) => s,
         Err(e) => {
-            let body = format!("Error: {}", e);
+            let body = format!("Error: {e}");
             return HttpResponse::InternalServerError()
                 .content_type("text/plain")
                 .insert_header(("Content-Length", body.len().to_string()))
@@ -393,7 +379,7 @@ async fn list_objects_v2(
     ) {
         Ok(r) => r,
         Err(e) => {
-            let body = format!("Error: {}", e);
+            let body = format!("Error: {e}");
             return HttpResponse::InternalServerError()
                 .content_type("text/plain")
                 .insert_header(("Content-Length", body.len().to_string()))
@@ -436,16 +422,16 @@ async fn list_objects_v2(
     xml.push_str(&format!("<Name>{}</Name>", &bucket));
     xml.push_str(&format!("<Prefix>{}</Prefix>", &prefix));
     if let Some(ref d) = delimiter {
-        xml.push_str(&format!("<Delimiter>{}</Delimiter>", d));
+        xml.push_str(&format!("<Delimiter>{d}</Delimiter>"));
     }
     xml.push_str(&format!("<KeyCount>{}</KeyCount>", contents.len()));
     if let Some(ref enc) = encoding_type {
-        xml.push_str(&format!("<EncodingType>{}</EncodingType>", enc));
+        xml.push_str(&format!("<EncodingType>{enc}</EncodingType>"));
     }
     for (key, size, last_modified) in &contents {
         xml.push_str("<Contents>");
-        xml.push_str(&format!("<Key>{}</Key>", key));
-        xml.push_str(&format!("<Size>{}</Size>", size));
+        xml.push_str(&format!("<Key>{key}</Key>"));
+        xml.push_str(&format!("<Size>{size}</Size>"));
         xml.push_str(&format!(
             "<LastModified>{}</LastModified>",
             last_modified.to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
@@ -455,7 +441,7 @@ async fn list_objects_v2(
     }
     for cp in &common_prefixes {
         xml.push_str("<CommonPrefixes>");
-        xml.push_str(&format!("<Prefix>{}</Prefix>", cp));
+        xml.push_str(&format!("<Prefix>{cp}</Prefix>"));
         xml.push_str("</CommonPrefixes>");
     }
     xml.push_str("</ListBucketResult>");
@@ -470,7 +456,7 @@ async fn main() -> std::io::Result<()> {
 
     // Read config file
     let config = AppConfig::from_file(&config_path)
-        .unwrap_or_else(|_| panic!("Failed to read config file {}", config_path));
+        .unwrap_or_else(|_| panic!("Failed to read config file {config_path}"));
 
     // Parse log level from config
     let log_level = match config.log_level.parse::<log::LevelFilter>() {
@@ -520,13 +506,12 @@ async fn main() -> std::io::Result<()> {
         for bucket in &config.buckets {
             if let Some(table_name) = sanitize_bucket_name(bucket) {
                 let sql = format!(
-                    "CREATE TABLE IF NOT EXISTS {} (
+                    "CREATE TABLE IF NOT EXISTS {table_name} (
                         id INTEGER PRIMARY KEY,
                         key TEXT NOT NULL UNIQUE,
                         data BLOB NOT NULL,
                         last_modified TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                     )",
-                    table_name
                 );
                 conn.execute(&sql, [])
                     .expect("Failed to create bucket table");
@@ -534,13 +519,12 @@ async fn main() -> std::io::Result<()> {
                     "CREATE TRIGGER IF NOT EXISTS update_{table_name}_timestamp
                      AFTER UPDATE ON {table_name}
                      BEGIN UPDATE {table_name} SET last_modified = CURRENT_TIMESTAMP WHERE id = NEW.id; END;",
-                    table_name = table_name
                 );
                 conn.execute(&sql, [])
                     .expect("Failed to create update trigger");
                 buckets_set.insert(bucket.clone());
             } else {
-                panic!("Invalid bucket name in config: {}", bucket);
+                panic!("Invalid bucket name in config: {bucket}");
             }
         }
     }

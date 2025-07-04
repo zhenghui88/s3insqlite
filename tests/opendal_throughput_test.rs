@@ -25,18 +25,18 @@ async fn benchmark_write(op: &Operator, prefix: &str, size: usize, count: usize)
     );
     let start = Instant::now();
     for i in 0..count {
-        let key = format!("{}/{:05}.bin", prefix, i);
+        let key = format!("{prefix}/{i:05}.bin");
         let data = random_bytes(size);
         op.write(&key, data)
             .await
-            .unwrap_or_else(|e| panic!("Failed to upload {}: {}", key, e));
+            .unwrap_or_else(|e| panic!("Failed to upload {key}: {e}"));
         if (i + 1) % 100 == 0 {
             println!("  Uploaded {}/{} objects", i + 1, count);
         }
     }
     let elapsed = start.elapsed().as_secs_f64();
     let mb_total = (size * count) as f64 / (1024.0 * 1024.0);
-    println!("Write benchmark finished in {:.2} seconds", elapsed);
+    println!("Write benchmark finished in {elapsed:.2} seconds");
     println!(
         "Write throughput: {:.2} MB/s, {:.2} objects/s",
         mb_total / elapsed,
@@ -53,11 +53,11 @@ async fn benchmark_read(op: &Operator, prefix: &str, size: usize, count: usize) 
     );
     let start = Instant::now();
     for i in 0..count {
-        let key = format!("{}/{:05}.bin", prefix, i);
+        let key = format!("{prefix}/{i:05}.bin");
         let data = op
             .read(&key)
             .await
-            .unwrap_or_else(|e| panic!("Failed to download {}: {}", key, e));
+            .unwrap_or_else(|e| panic!("Failed to download {key}: {e}"));
         assert_eq!(
             data.len(),
             size,
@@ -72,7 +72,7 @@ async fn benchmark_read(op: &Operator, prefix: &str, size: usize, count: usize) 
     }
     let elapsed = start.elapsed().as_secs_f64();
     let mb_total = (size * count) as f64 / (1024.0 * 1024.0);
-    println!("Read benchmark finished in {:.2} seconds", elapsed);
+    println!("Read benchmark finished in {elapsed:.2} seconds");
     println!(
         "Read throughput: {:.2} MB/s, {:.2} objects/s",
         mb_total / elapsed,
