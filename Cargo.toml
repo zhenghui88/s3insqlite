@@ -21,6 +21,6 @@ url = "2"
 [dev-dependencies]
 ndarray = { version = "0.16" }
 rand = { version = "0.9" }
-opendal = { version = "0.53", features = ["services-s3"] }
+opendal = { version = "0.54", features = ["services-s3"] }
 zarrs = { version = "0.21", features = ["zstd", "async"] }
-zarrs_opendal = { version = "0.7" }
+zarrs_opendal = { version = "0.8" }
