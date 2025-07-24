@@ -17,17 +17,32 @@ struct AppState {
 }
 
 /// S3 ListBuckets API: GET /
-async fn list_buckets(data: web::Data<AppState>) -> HttpResponse {
+async fn list_buckets(data: web::Data<AppState>, req: HttpRequest) -> HttpResponse {
     info!(
         "ListBuckets called, returning {} buckets",
         data.buckets.len()
     );
+    let query = req.query_string();
+    let params: HashMap<_, _> = url::form_urlencoded::parse(query.as_bytes())
+        .into_owned()
+        .collect();
+    let prefix = params.get("prefix");
+
     let mut xml = String::from(r#"<?xml version="1.0" encoding="UTF-8"?>"#);
     xml.push_str("\n<ListAllMyBucketsResult>\n   <Buckets>");
     for bucket in &data.buckets {
+        if let Some(prefix) = prefix {
+            if !bucket.starts_with(prefix) {
+                continue; // Skip buckets that don't match the prefix
+            }
+        }
         xml.push_str(&format!("\n<Bucket>\n<Name>{bucket}</Name>\n</Bucket>"));
     }
-    xml.push_str("\n   </Buckets>\n</ListAllMyBucketsResult>");
+    xml.push_str("\n</Buckets>");
+    if let Some(prefix) = prefix {
+        xml.push_str(&format!("\n<Prefix>{prefix}</Prefix>"));
+    }
+    xml.push_str("\n</ListAllMyBucketsResult>\n");
     HttpResponse::Ok().content_type("application/xml").body(xml)
 }
 
@@ -72,9 +87,15 @@ fn validate_bucket(bucket: &str, data: &AppState) -> Result<String, HttpResponse
     if data.buckets.contains(bucket) {
         Ok(bucket.to_string())
     } else {
-        let body = "Bucket not allowed";
+        let body = format!(
+            r#"<?xml version="1.0" encoding="UTF-8"?>
+            <Error>
+            <Code>AccessDenied</Code>
+            <Message>Bucket access denied: {bucket}</Message>
+            </Error>"#
+        );
         Err(HttpResponse::Forbidden()
-            .content_type("text/plain")
+            .content_type("text/xml")
             .insert_header(("Content-Length", body.len().to_string()))
             .body(body))
     }
@@ -107,18 +128,30 @@ async fn upload_object(
             }
             Err(e) => {
                 error!("Failed to upload object '{key}' to bucket '{bucket}': {e}",);
-                let body = format!("Error: {e}");
+                let body = format!(
+                    r#"<?xml version="1.0" encoding="UTF-8"?>
+                    <Error>
+                        <Code>InternalError</Code>
+                        <Message>{e}</Message>
+                    </Error>"#
+                );
                 HttpResponse::InternalServerError()
-                    .content_type("text/plain")
+                    .content_type("text/xml")
                     .insert_header(("Content-Length", body.len().to_string()))
                     .body(body)
             }
         }
     } else {
         warn!("Invalid bucket name attempted: {bucket}");
-        let body = "Invalid bucket name";
+        let body = format!(
+            r#"<?xml version="1.0" encoding="UTF-8"?>
+            <Error>
+                <Code>InvalidBucketName</Code>
+                <Message>Invalid bucket name attempted: {bucket}</Message>
+            </Error>"#
+        );
         HttpResponse::BadRequest()
-            .content_type("text/plain")
+            .content_type("text/xml")
             .insert_header(("Content-Length", body.len().to_string()))
             .body(body)
     }
@@ -145,26 +178,44 @@ async fn download_object(
                 .insert_header(("Content-Length", data.len().to_string()))
                 .body(data),
             Err(rusqlite::Error::QueryReturnedNoRows) => {
-                let body = "Object not found";
+                let body = format!(
+                    r#"<?xml version="1.0" encoding="UTF-8"?>
+                    <Error>
+                        <Code>NoSuchKey</Code>
+                        <Message>The object you requested does not exist: {key}</Message>
+                    </Error>"#
+                );
                 HttpResponse::NotFound()
-                    .content_type("text/plain")
+                    .content_type("text/xml")
                     .insert_header(("Content-Length", body.len().to_string()))
                     .body(body)
             }
             Err(e) => {
                 error!("Failed to download object '{key}' from bucket '{bucket}': {e}",);
-                let body = format!("Error: {e}");
+                let body = format!(
+                    r#"<?xml version="1.0" encoding="UTF-8"?>
+                    <Error>
+                        <Code>InternalError</Code>
+                        <Message>{e}</Message>
+                    </Error>"#
+                );
                 HttpResponse::InternalServerError()
-                    .content_type("text/plain")
+                    .content_type("text/xml")
                     .insert_header(("Content-Length", body.len().to_string()))
                     .body(body)
             }
         }
     } else {
         warn!("Invalid bucket name attempted: {bucket}");
-        let body = "Invalid bucket name";
+        let body = format!(
+            r#"<?xml version="1.0" encoding="UTF-8"?>
+            <Error>
+                <Code>InvalidBucketName</Code>
+                <Message>Invalid bucket name attempted: {bucket}</Message>
+            </Error>"#
+        );
         HttpResponse::BadRequest()
-            .content_type("text/plain")
+            .content_type("text/xml")
             .insert_header(("Content-Length", body.len().to_string()))
             .body(body)
     }
@@ -188,9 +239,15 @@ async fn delete_object(
         match conn.execute(&sql, params![key]) {
             Ok(affected) => {
                 if affected == 0 {
-                    let body = "Object not found";
+                    let body = format!(
+                        r#"<?xml version="1.0" encoding="UTF-8"?>
+                        <Error>
+                            <Code>NoSuchKey</Code>
+                            <Message>The object for deletion does not exist: {key}</Message>
+                        </Error>"#
+                    );
                     HttpResponse::NotFound()
-                        .content_type("text/plain")
+                        .content_type("text/xml")
                         .insert_header(("Content-Length", body.len().to_string()))
                         .body(body)
                 } else {
@@ -199,18 +256,30 @@ async fn delete_object(
             }
             Err(e) => {
                 error!("Failed to delete object '{key}' from bucket '{bucket}': {e}",);
-                let body = format!("Error: {e}");
+                let body = format!(
+                    r#"<?xml version="1.0" encoding="UTF-8"?>
+                    <Error>
+                        <Code>InternalError</Code>
+                        <Message>{e}</Message>
+                    </Error>"#
+                );
                 HttpResponse::InternalServerError()
-                    .content_type("text/plain")
+                    .content_type("text/xml")
                     .insert_header(("Content-Length", body.len().to_string()))
                     .body(body)
             }
         }
     } else {
         warn!("Invalid bucket name attempted: {bucket}");
-        let body = "Invalid bucket name";
+        let body = format!(
+            r#"<?xml version="1.0" encoding="UTF-8"?>
+            <Error>
+                <Code>InvalidBucketName</Code>
+                <Message>Invalid bucket name attempted: {bucket}</Message>
+            </Error>"#
+        );
         HttpResponse::BadRequest()
-            .content_type("text/plain")
+            .content_type("text/xml")
             .insert_header(("Content-Length", body.len().to_string()))
             .body(body)
     }
@@ -236,26 +305,44 @@ async fn head_object(
                 .insert_header(("Content-Length", len.to_string()))
                 .finish(),
             Ok(None) | Err(rusqlite::Error::QueryReturnedNoRows) => {
-                let body = "Object not found";
+                let body = format!(
+                    r#"<?xml version="1.0" encoding="UTF-8"?>
+                    <Error>
+                        <Code>NoSuchKey</Code>
+                        <Message>The object you requested does not exist: {key}</Message>
+                    </Error>"#
+                );
                 HttpResponse::NotFound()
-                    .content_type("text/plain")
+                    .content_type("text/xml")
                     .insert_header(("Content-Length", body.len().to_string()))
                     .body(body)
             }
             Err(e) => {
                 error!("Failed to head object '{key}' from bucket '{bucket}': {e}",);
-                let body = format!("Error: {e}");
+                let body = format!(
+                    r#"<?xml version="1.0" encoding="UTF-8"?>
+                    <Error>
+                        <Code>InternalError</Code>
+                        <Message>{e}</Message>
+                    </Error>"#
+                );
                 HttpResponse::InternalServerError()
-                    .content_type("text/plain")
+                    .content_type("text/xml")
                     .insert_header(("Content-Length", body.len().to_string()))
                     .body(body)
             }
         }
     } else {
         warn!("Invalid bucket name attempted: {bucket}");
-        let body = "Invalid bucket name";
+        let body = format!(
+            r#"<?xml version="1.0" encoding="UTF-8"?>
+            <Error>
+                <Code>InvalidBucketName</Code>
+                <Message>Invalid bucket name attempted: {bucket}</Message>
+            </Error>"#
+        );
         HttpResponse::BadRequest()
-            .content_type("text/plain")
+            .content_type("text/xml")
             .insert_header(("Content-Length", body.len().to_string()))
             .body(body)
     }
@@ -268,10 +355,10 @@ async fn get_bucket_versioning(data: web::Data<AppState>, path: web::Path<String
         Err(resp) => return resp,
     };
     info!("GetBucketVersioning for bucket '{bucket}'");
-    let xml = r#"<?xml version=\"1.0\" encoding=\"UTF-8\"?>
-<VersioningConfiguration>
-   <Status>Suspended</Status>
-</VersioningConfiguration>"#;
+    let xml = r#"<?xml version="1.0" encoding="UTF-8"?>
+        <VersioningConfiguration>
+            <Status>Suspended</Status>
+        </VersioningConfiguration>"#;
     HttpResponse::Ok().content_type("application/xml").body(xml)
 }
 
@@ -312,7 +399,6 @@ async fn list_objects_v2(
         .get("prefix")
         .cloned()
         .unwrap_or_default()
-        .trim_end_matches('/')
         .to_string();
     let delimiter = params.get("delimiter").cloned();
     let encoding_type = params.get("encoding-type").cloned();
@@ -321,9 +407,15 @@ async fn list_objects_v2(
     let conn = match pool.get() {
         Ok(c) => c,
         Err(e) => {
-            let body = format!("Error: {e}");
+            let body = format!(
+                r#"<?xml version="1.0" encoding="UTF-8"?>
+                <Error>
+                    <Code>InternalError</Code>
+                    <Message>{e}</Message>
+                </Error>"#
+            );
             return HttpResponse::InternalServerError()
-                .content_type("text/plain")
+                .content_type("text/xml")
                 .insert_header(("Content-Length", body.len().to_string()))
                 .body(body);
         }
@@ -341,27 +433,10 @@ async fn list_objects_v2(
     };
 
     // Build SQL query for keys and last_modified
-    let sql = format!(
+    let mut stmt = conn.prepare(&format!(
         "SELECT key, length(data), last_modified FROM {table_name} WHERE key LIKE ?1 ORDER BY key ASC",
-    );
-    let sql_params: Vec<String> = vec![format!(
-        "{}%",
-        if prefix.is_empty() {
-            String::from("%")
-        } else {
-            prefix.clone()
-        }
-    )];
-    let mut stmt = match conn.prepare(&sql) {
-        Ok(s) => s,
-        Err(e) => {
-            let body = format!("Error: {e}");
-            return HttpResponse::InternalServerError()
-                .content_type("text/plain")
-                .insert_header(("Content-Length", body.len().to_string()))
-                .body(body);
-        }
-    };
+    )).expect("invalid SQL statement");
+    let sql_params: Vec<String> = vec![format!("{prefix}%")];
 
     let rows = match stmt.query_map(
         rusqlite::params_from_iter(sql_params.iter().map(|s| s as &dyn rusqlite::ToSql)),
@@ -379,26 +454,25 @@ async fn list_objects_v2(
     ) {
         Ok(r) => r,
         Err(e) => {
-            let body = format!("Error: {e}");
+            let body = format!(
+                r#"<?xml version="1.0" encoding="UTF-8"?>
+                <Error>
+                    <Code>InternalError</Code>
+                    <Message>{e}</Message>
+                </Error>"#
+            );
             return HttpResponse::InternalServerError()
-                .content_type("text/plain")
+                .content_type("text/xml")
                 .insert_header(("Content-Length", body.len().to_string()))
                 .body(body);
         }
     };
 
     let mut contents = Vec::new();
-    let mut common_prefixes = HashSet::new();
 
     for row in rows {
         match row {
             Ok((key, size, last_modified)) => {
-                if let Some(ref delim) = delimiter {
-                    if let Some(idx) = key[prefix.len()..].find(delim) {
-                        let cp = format!("{}{}", &key[..prefix.len() + idx + delim.len()], delim);
-                        common_prefixes.insert(cp);
-                    }
-                }
                 contents.push((key, size, last_modified));
             }
             Err(_) => continue,
@@ -438,11 +512,6 @@ async fn list_objects_v2(
         ));
         xml.push_str("<StorageClass>STANDARD</StorageClass>");
         xml.push_str("</Contents>");
-    }
-    for cp in &common_prefixes {
-        xml.push_str("<CommonPrefixes>");
-        xml.push_str(&format!("<Prefix>{cp}</Prefix>"));
-        xml.push_str("</CommonPrefixes>");
     }
     xml.push_str("</ListBucketResult>");
 
@@ -543,7 +612,6 @@ async fn main() -> std::io::Result<()> {
             .route("/", web::get().to(list_buckets))
             // Path-style endpoints: /{bucket}/{key:.*} and /{bucket}
             .route("/{bucket}", web::get().to(bucket_dispatch))
-            .route("/{bucket}", web::get().to(get_bucket_versioning))
             .route("/{bucket}/{key:.*}", web::put().to(upload_object))
             .route("/{bucket}/{key:.*}", web::get().to(download_object))
             .route("/{bucket}/{key:.*}", web::delete().to(delete_object))
