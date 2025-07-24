@@ -469,11 +469,25 @@ async fn list_objects_v2(
     };
 
     let mut contents = Vec::new();
+    let mut common_prefixes = HashSet::new();
 
     for row in rows {
         match row {
             Ok((key, size, last_modified)) => {
-                contents.push((key, size, last_modified));
+                match delimiter {
+                    Some(ref d) if key.starts_with(&prefix) && key.len() > prefix.len() => {
+                        // Check if the key contains the delimiter
+                        if let Some(pos) = &key[prefix.len()..].find(d) {
+                            // Extract common prefix
+                            let common_prefix = &key[..prefix.len() + pos + d.len()];
+                            common_prefixes.insert(common_prefix.to_string());
+                        } else {
+                            // Add to contents if no delimiter found
+                            contents.push((key, size, last_modified));
+                        }
+                    }
+                    _ => contents.push((key, size, last_modified)), // No delimiter or no match, add to contents
+                };
             }
             Err(_) => continue,
         }
@@ -512,6 +526,11 @@ async fn list_objects_v2(
         ));
         xml.push_str("<StorageClass>STANDARD</StorageClass>");
         xml.push_str("</Contents>");
+    }
+    for prefix in &common_prefixes {
+        xml.push_str("<CommonPrefixes>");
+        xml.push_str(&format!("<Prefix>{prefix}</Prefix>"));
+        xml.push_str("</CommonPrefixes>");
     }
     xml.push_str("</ListBucketResult>");
 

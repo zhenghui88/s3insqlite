@@ -1,5 +1,5 @@
 bind_address = "127.0.0.1"
-port = 8080
+port = 9000
 buckets = ["test"]
 database_path = "database.sqlite"
 max_workers = 2
