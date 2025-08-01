@@ -116,11 +116,13 @@ async fn upload_object(
     let pool = &data.db_pool;
     let conn = pool.get().unwrap();
     if let Some(table_name) = sanitize_bucket_name(&bucket) {
-        let sql = format!(
-            "INSERT INTO {table_name} (key, data) VALUES (?1, ?2)
+        let mut stmt = conn
+            .prepare(&format!(
+                "INSERT INTO {table_name} (key, data) VALUES (?1, ?2)
              ON CONFLICT(key) DO UPDATE SET data=excluded.data",
-        );
-        match conn.execute(&sql, params![key, &body[..]]) {
+            ))
+            .expect("Failed to prepare SQL statement");
+        match stmt.execute(params![key, &body[..]]) {
             Ok(_) => {
                 info!("Object '{key}' uploaded to bucket '{bucket}'");
                 // S3: 200 OK, no body required
@@ -603,6 +605,11 @@ async fn main() -> std::io::Result<()> {
                 );
                 conn.execute(&sql, [])
                     .expect("Failed to create bucket table");
+                let sql = format!(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS idx_{table_name}_key ON {table_name} (key)"
+                );
+                conn.execute(&sql, [])
+                    .expect("Failed to create unique index on bucket table");
                 let sql = format!(
                     "CREATE TRIGGER IF NOT EXISTS update_{table_name}_timestamp
                      AFTER UPDATE ON {table_name}
