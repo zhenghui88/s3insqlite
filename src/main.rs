@@ -496,12 +496,7 @@ async fn list_objects_v2(
     }
 
     log::info!(
-        "ListObjectsV2 result: bucket='{}', prefix='{}', delimiter='{:?}', key_count={}, contents={:?}",
-        bucket,
-        prefix,
-        delimiter,
-        contents.len(),
-        contents
+        "ListObjectsV2 result: bucket='{bucket}', prefix='{prefix}', delimiter='{delimiter:?}', contents={contents:?}, common_prefixes={common_prefixes:?}",
     );
 
     // XML response
