@@ -592,8 +592,7 @@ async fn main() -> std::io::Result<()> {
             if let Some(table_name) = sanitize_bucket_name(bucket) {
                 let sql = format!(
                     "CREATE TABLE IF NOT EXISTS {table_name} (
-                        id INTEGER PRIMARY KEY,
-                        key TEXT NOT NULL UNIQUE,
+                        key TEXT NOT NULL PRIMARY KEY,
                         data BLOB NOT NULL,
                         last_modified TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                     )",
@@ -601,14 +600,9 @@ async fn main() -> std::io::Result<()> {
                 conn.execute(&sql, [])
                     .expect("Failed to create bucket table");
                 let sql = format!(
-                    "CREATE UNIQUE INDEX IF NOT EXISTS idx_{table_name}_key ON {table_name} (key)"
-                );
-                conn.execute(&sql, [])
-                    .expect("Failed to create unique index on bucket table");
-                let sql = format!(
                     "CREATE TRIGGER IF NOT EXISTS update_{table_name}_timestamp
                      AFTER UPDATE ON {table_name}
-                     BEGIN UPDATE {table_name} SET last_modified = CURRENT_TIMESTAMP WHERE id = NEW.id; END;",
+                     BEGIN UPDATE {table_name} SET last_modified = CURRENT_TIMESTAMP WHERE key = NEW.key; END;",
                 );
                 conn.execute(&sql, [])
                     .expect("Failed to create update trigger");
