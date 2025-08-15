@@ -31,10 +31,10 @@ async fn list_buckets(data: web::Data<AppState>, req: HttpRequest) -> HttpRespon
     let mut xml = String::from(r#"<?xml version="1.0" encoding="UTF-8"?>"#);
     xml.push_str("\n<ListAllMyBucketsResult>\n   <Buckets>");
     for bucket in &data.buckets {
-        if let Some(prefix) = prefix {
-            if !bucket.starts_with(prefix) {
-                continue; // Skip buckets that don't match the prefix
-            }
+        if let Some(prefix) = prefix
+            && !bucket.starts_with(prefix)
+        {
+            continue; // Skip buckets that don't match the prefix
         }
         xml.push_str(&format!("\n<Bucket>\n<Name>{bucket}</Name>\n</Bucket>"));
     }
@@ -57,7 +57,9 @@ fn sanitize_bucket_name(bucket: &str) -> Option<String> {
     {
         return None;
     }
-    Some(format!("bucket_{bucket}"))
+    // replace dash with underscore
+    let table_name = bucket.replace('-', "_");
+    Some(format!("bucket_{table_name}"))
 }
 
 #[derive(Debug, Deserialize)]
