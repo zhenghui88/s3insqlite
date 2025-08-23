@@ -1,26 +1,32 @@
-use actix_web::{HttpRequest, HttpResponse, web};
+use axum::{
+    extract::{Path, Query, State},
+    http::{HeaderMap, StatusCode},
+    response::{IntoResponse, Response},
+};
 use chrono::{DateTime, Utc};
 use log::{error, info};
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use crate::models::{AppState, ListBucketResult};
 use crate::utils::{sanitize_bucket_name, validate_bucket, xml_error_response};
 
 /// S3 ListBuckets API: GET /
-pub async fn list_buckets(data: web::Data<AppState>, req: HttpRequest) -> HttpResponse {
+pub async fn list_buckets(
+    State(state): State<Arc<AppState>>,
+    query: Query<HashMap<String, String>>,
+) -> Response {
     info!(
         "ListBuckets called, returning {} buckets",
-        data.buckets.len()
+        state.buckets.len()
     );
-    let query = req.query_string();
-    let params: HashMap<_, _> = url::form_urlencoded::parse(query.as_bytes())
-        .into_owned()
-        .collect();
-    let prefix = params.get("prefix");
+
+    let prefix = query.get("prefix");
 
     let mut xml = String::from(r#"<?xml version="1.0" encoding="UTF-8"?>"#);
     xml.push_str("\n<ListAllMyBucketsResult>\n   <Buckets>");
-    for bucket in &data.buckets {
+
+    for bucket in state.buckets.iter() {
         if let Some(prefix) = prefix
             && !bucket.starts_with(prefix)
         {
@@ -28,70 +34,70 @@ pub async fn list_buckets(data: web::Data<AppState>, req: HttpRequest) -> HttpRe
         }
         xml.push_str(&format!("\n<Bucket>\n<Name>{bucket}</Name>\n</Bucket>"));
     }
+
     xml.push_str("\n</Buckets>");
     if let Some(prefix) = prefix {
         xml.push_str(&format!("\n<Prefix>{prefix}</Prefix>"));
     }
     xml.push_str("\n</ListAllMyBucketsResult>\n");
-    HttpResponse::Ok()
-        .content_type("application/xml")
-        .insert_header(("Content-Length", xml.len().to_string()))
-        .body(xml)
+
+    let mut headers = HeaderMap::new();
+    headers.insert("Content-Type", "application/xml".parse().unwrap());
+    headers.insert("Content-Length", xml.len().to_string().parse().unwrap());
+
+    (StatusCode::OK, headers, xml).into_response()
 }
 
 /// S3 Bucket Versioning endpoint
 pub async fn get_bucket_versioning(
-    data: web::Data<AppState>,
-    path: web::Path<String>,
-) -> HttpResponse {
-    let bucket = path.into_inner();
-    let bucket = match validate_bucket(&bucket, &data.buckets) {
+    State(state): State<Arc<AppState>>,
+    Path(bucket): Path<String>,
+) -> Response {
+    let bucket = match validate_bucket(&bucket, &state.buckets) {
         Ok(b) => b,
-        Err(resp) => return resp,
+        Err(resp) => return *resp,
     };
+
     info!("GetBucketVersioning for bucket '{bucket}'");
+
     let xml = r#"<?xml version="1.0" encoding="UTF-8"?>
         <VersioningConfiguration>
             <Status>Suspended</Status>
         </VersioningConfiguration>"#;
-    HttpResponse::Ok()
-        .content_type("application/xml")
-        .insert_header(("Content-Length", xml.len().to_string()))
-        .body(xml)
+
+    let mut headers = HeaderMap::new();
+    headers.insert("Content-Type", "application/xml".parse().unwrap());
+    headers.insert("Content-Length", xml.len().to_string().parse().unwrap());
+
+    (StatusCode::OK, headers, xml).into_response()
 }
 
 /// Route bucket operations based on query parameters
 pub async fn bucket_dispatch(
-    data: web::Data<AppState>,
-    path: web::Path<String>,
-    req: HttpRequest,
-) -> HttpResponse {
-    let bucket = path.into_inner();
-    let query = req.query_string();
-    let params: HashMap<_, _> = url::form_urlencoded::parse(query.as_bytes())
-        .into_owned()
-        .collect();
-
+    State(state): State<Arc<AppState>>,
+    Path(bucket): Path<String>,
+    query: Query<HashMap<String, String>>,
+) -> Response {
     // S3 ListObjectsV2: GET /?list-type=2
-    if params.get("list-type").map(|v| v == "2").unwrap_or(false) {
-        list_objects_v2(data, bucket, params).await
-    } else if params.contains_key("versioning") {
-        get_bucket_versioning(data, web::Path::from(bucket)).await
+    if query.get("list-type").map(|v| v == "2").unwrap_or(false) {
+        list_objects_v2(state, bucket, query.0).await
+    } else if query.contains_key("versioning") {
+        get_bucket_versioning(State(state), Path(bucket)).await
     } else {
-        HttpResponse::NotImplemented().finish()
+        (StatusCode::NOT_IMPLEMENTED, "Not implemented").into_response()
     }
 }
 
 /// Implementation for ListObjectsV2 S3 API
 async fn list_objects_v2(
-    data: web::Data<AppState>,
+    state: Arc<AppState>,
     bucket: String,
     params: HashMap<String, String>,
-) -> HttpResponse {
+) -> Response {
     // Validate bucket
-    let bucket = match validate_bucket(&bucket, &data.buckets) {
+    let bucket = match validate_bucket(&bucket, &state.buckets) {
         Ok(b) => b,
-        Err(resp) => return resp,
+        Err(resp) => return *resp,
     };
 
     // Extract query parameters used by S3 ListObjectsV2
@@ -110,13 +116,13 @@ async fn list_objects_v2(
         .get("delimiter")
         .and_then(|d| if d.is_empty() { None } else { d.chars().next() });
 
-    let pool = &data.db_pool;
+    let pool = &state.db_pool;
     let conn = match pool.get() {
         Ok(c) => c,
         Err(e) => {
             error!("Database connection error: {}", e);
             return xml_error_response(
-                actix_web::http::StatusCode::INTERNAL_SERVER_ERROR,
+                StatusCode::INTERNAL_SERVER_ERROR,
                 "InternalError",
                 &format!("Database connection error: {}", e),
             );
@@ -127,7 +133,7 @@ async fn list_objects_v2(
         Some(t) => t,
         None => {
             return xml_error_response(
-                actix_web::http::StatusCode::BAD_REQUEST,
+                StatusCode::BAD_REQUEST,
                 "InvalidBucketName",
                 &format!("Invalid bucket name: {}", bucket),
             );
@@ -142,7 +148,7 @@ async fn list_objects_v2(
         Err(e) => {
             error!("SQL preparation error: {}", e);
             return xml_error_response(
-                actix_web::http::StatusCode::INTERNAL_SERVER_ERROR,
+                StatusCode::INTERNAL_SERVER_ERROR,
                 "InternalError",
                 &format!("SQL preparation error: {}", e),
             );
@@ -177,7 +183,7 @@ async fn list_objects_v2(
         Err(e) => {
             error!("SQL query error: {}", e);
             return xml_error_response(
-                actix_web::http::StatusCode::INTERNAL_SERVER_ERROR,
+                StatusCode::INTERNAL_SERVER_ERROR,
                 "InternalError",
                 &format!("SQL query error: {}", e),
             );
@@ -208,8 +214,9 @@ async fn list_objects_v2(
     );
 
     let body = result.to_xml();
-    HttpResponse::Ok()
-        .content_type("application/xml")
-        .insert_header(("Content-Length", body.len().to_string()))
-        .body(body)
+    let mut headers = HeaderMap::new();
+    headers.insert("Content-Type", "application/xml".parse().unwrap());
+    headers.insert("Content-Length", body.len().to_string().parse().unwrap());
+
+    (StatusCode::OK, headers, body).into_response()
 }

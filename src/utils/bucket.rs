@@ -1,3 +1,7 @@
+use axum::{
+    http::{HeaderMap, StatusCode},
+    response::{IntoResponse, Response},
+};
 use rusqlite::Connection;
 use std::fmt::Write;
 
@@ -22,7 +26,7 @@ pub fn sanitize_bucket_name(bucket: &str) -> Option<String> {
 pub fn validate_bucket(
     bucket: &str,
     allowed_buckets: &std::collections::HashSet<String>,
-) -> Result<String, actix_web::HttpResponse> {
+) -> Result<String, Box<Response>> {
     if allowed_buckets.contains(bucket) {
         Ok(bucket.to_string())
     } else {
@@ -33,10 +37,14 @@ pub fn validate_bucket(
             <Message>Bucket access denied: {bucket}</Message>
             </Error>"#
         );
-        Err(actix_web::HttpResponse::Forbidden()
-            .content_type("text/xml")
-            .insert_header(("Content-Length", body.len().to_string()))
-            .body(body))
+
+        let mut headers = HeaderMap::new();
+        headers.insert("Content-Type", "text/xml".parse().unwrap());
+        headers.insert("Content-Length", body.len().to_string().parse().unwrap());
+
+        Err(Box::new(
+            (StatusCode::FORBIDDEN, headers, body).into_response(),
+        ))
     }
 }
 
@@ -84,14 +92,11 @@ pub fn generate_xml_error(code: &str, message: &str) -> String {
 }
 
 /// Generate HTTP response with XML error
-pub fn xml_error_response(
-    status: actix_web::http::StatusCode,
-    code: &str,
-    message: &str,
-) -> actix_web::HttpResponse {
+pub fn xml_error_response(status: StatusCode, code: &str, message: &str) -> Response {
     let body = generate_xml_error(code, message);
-    actix_web::HttpResponse::build(status)
-        .content_type("text/xml")
-        .insert_header(("Content-Length", body.len().to_string()))
-        .body(body)
+    let mut headers = HeaderMap::new();
+    headers.insert("Content-Type", "text/xml".parse().unwrap());
+    headers.insert("Content-Length", body.len().to_string().parse().unwrap());
+
+    (status, headers, body).into_response()
 }

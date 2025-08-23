@@ -1,8 +1,13 @@
-use actix_web::web::Bytes;
-use actix_web::{HttpResponse, web};
+use axum::{
+    body::Bytes,
+    extract::{Path, State},
+    http::{HeaderMap, StatusCode},
+    response::{IntoResponse, Response},
+};
 use chrono::{DateTime, Utc};
 use log::{error, info, warn};
 use rusqlite::params;
+use std::sync::Arc;
 
 use crate::models::AppState;
 use crate::utils::{sanitize_bucket_name, validate_bucket, xml_error_response};
@@ -10,24 +15,23 @@ use crate::utils::{sanitize_bucket_name, validate_bucket, xml_error_response};
 /// Upload an object to a bucket
 /// PUT /{bucket}/{key}
 pub async fn upload_object(
-    data: web::Data<AppState>,
-    path: web::Path<(String, String)>,
+    State(state): State<Arc<AppState>>,
+    Path((bucket, key)): Path<(String, String)>,
     body: Bytes,
-) -> HttpResponse {
-    let (bucket, key) = path.into_inner();
-    let bucket = match validate_bucket(&bucket, &data.buckets) {
+) -> Response {
+    let bucket = match validate_bucket(&bucket, &state.buckets) {
         Ok(b) => b,
-        Err(resp) => return resp,
+        Err(resp) => return *resp,
     };
 
     info!("Uploading object '{key}' to bucket '{bucket}'");
-    let pool = &data.db_pool;
+    let pool = &state.db_pool;
     let conn = match pool.get() {
         Ok(conn) => conn,
         Err(e) => {
             error!("Failed to get database connection: {e}");
             return xml_error_response(
-                actix_web::http::StatusCode::INTERNAL_SERVER_ERROR,
+                StatusCode::INTERNAL_SERVER_ERROR,
                 "InternalError",
                 &format!("Database connection error: {e}"),
             );
@@ -50,12 +54,12 @@ pub async fn upload_object(
                         Ok(_) => {
                             info!("Object '{key}' uploaded to bucket '{bucket}'");
                             // S3: 200 OK, no body required
-                            HttpResponse::Ok().finish()
+                            StatusCode::OK.into_response()
                         }
                         Err(e) => {
                             error!("Failed to upload object '{key}' to bucket '{bucket}': {e}");
                             xml_error_response(
-                                actix_web::http::StatusCode::INTERNAL_SERVER_ERROR,
+                                StatusCode::INTERNAL_SERVER_ERROR,
                                 "InternalError",
                                 &e.to_string(),
                             )
@@ -65,7 +69,7 @@ pub async fn upload_object(
                 Err(e) => {
                     error!("Failed to prepare statement: {e}");
                     xml_error_response(
-                        actix_web::http::StatusCode::INTERNAL_SERVER_ERROR,
+                        StatusCode::INTERNAL_SERVER_ERROR,
                         "InternalError",
                         &e.to_string(),
                     )
@@ -75,7 +79,7 @@ pub async fn upload_object(
         None => {
             warn!("Invalid bucket name attempted: {bucket}");
             xml_error_response(
-                actix_web::http::StatusCode::BAD_REQUEST,
+                StatusCode::BAD_REQUEST,
                 "InvalidBucketName",
                 &format!("Invalid bucket name attempted: {bucket}"),
             )
@@ -86,24 +90,23 @@ pub async fn upload_object(
 /// Download an object from a bucket
 /// GET /{bucket}/{key}
 pub async fn download_object(
-    data: web::Data<AppState>,
-    path: web::Path<(String, String)>,
-) -> HttpResponse {
-    let (bucket, key) = path.into_inner();
+    State(state): State<Arc<AppState>>,
+    Path((bucket, key)): Path<(String, String)>,
+) -> Response {
     info!("Downloading object '{key}' from bucket '{bucket}'");
 
-    let bucket = match validate_bucket(&bucket, &data.buckets) {
+    let bucket = match validate_bucket(&bucket, &state.buckets) {
         Ok(b) => b,
-        Err(resp) => return resp,
+        Err(resp) => return *resp,
     };
 
-    let pool = &data.db_pool;
+    let pool = &state.db_pool;
     let conn = match pool.get() {
         Ok(conn) => conn,
         Err(e) => {
             error!("Failed to get database connection: {e}");
             return xml_error_response(
-                actix_web::http::StatusCode::INTERNAL_SERVER_ERROR,
+                StatusCode::INTERNAL_SERVER_ERROR,
                 "InternalError",
                 &format!("Database connection error: {e}"),
             );
@@ -114,19 +117,22 @@ pub async fn download_object(
         Some(table_name) => {
             let sql = format!("SELECT data FROM {table_name} WHERE key = ?1");
             match conn.query_row(&sql, params![key], |row| row.get::<_, Vec<u8>>(0)) {
-                Ok(data) => HttpResponse::Ok()
-                    .content_type("application/octet-stream")
-                    .insert_header(("Content-Length", data.len().to_string()))
-                    .body(data),
+                Ok(data) => {
+                    let mut headers = HeaderMap::new();
+                    headers.insert("Content-Type", "application/octet-stream".parse().unwrap());
+                    headers.insert("Content-Length", data.len().to_string().parse().unwrap());
+
+                    (StatusCode::OK, headers, data).into_response()
+                }
                 Err(rusqlite::Error::QueryReturnedNoRows) => xml_error_response(
-                    actix_web::http::StatusCode::NOT_FOUND,
+                    StatusCode::NOT_FOUND,
                     "NoSuchKey",
                     &format!("The object you requested does not exist: {key}"),
                 ),
                 Err(e) => {
                     error!("Failed to download object '{key}' from bucket '{bucket}': {e}");
                     xml_error_response(
-                        actix_web::http::StatusCode::INTERNAL_SERVER_ERROR,
+                        StatusCode::INTERNAL_SERVER_ERROR,
                         "InternalError",
                         &e.to_string(),
                     )
@@ -136,7 +142,7 @@ pub async fn download_object(
         None => {
             warn!("Invalid bucket name attempted: {bucket}");
             xml_error_response(
-                actix_web::http::StatusCode::BAD_REQUEST,
+                StatusCode::BAD_REQUEST,
                 "InvalidBucketName",
                 &format!("Invalid bucket name attempted: {bucket}"),
             )
@@ -147,24 +153,23 @@ pub async fn download_object(
 /// Delete an object from a bucket
 /// DELETE /{bucket}/{key}
 pub async fn delete_object(
-    data: web::Data<AppState>,
-    path: web::Path<(String, String)>,
-) -> HttpResponse {
-    let (bucket, key) = path.into_inner();
+    State(state): State<Arc<AppState>>,
+    Path((bucket, key)): Path<(String, String)>,
+) -> Response {
     info!("Deleting object '{key}' from bucket '{bucket}'");
 
-    let bucket = match validate_bucket(&bucket, &data.buckets) {
+    let bucket = match validate_bucket(&bucket, &state.buckets) {
         Ok(b) => b,
-        Err(resp) => return resp,
+        Err(resp) => return *resp,
     };
 
-    let pool = &data.db_pool;
+    let pool = &state.db_pool;
     let conn = match pool.get() {
         Ok(conn) => conn,
         Err(e) => {
             error!("Failed to get database connection: {e}");
             return xml_error_response(
-                actix_web::http::StatusCode::INTERNAL_SERVER_ERROR,
+                StatusCode::INTERNAL_SERVER_ERROR,
                 "InternalError",
                 &format!("Database connection error: {e}"),
             );
@@ -178,18 +183,18 @@ pub async fn delete_object(
                 Ok(affected) => {
                     if affected == 0 {
                         xml_error_response(
-                            actix_web::http::StatusCode::NOT_FOUND,
+                            StatusCode::NOT_FOUND,
                             "NoSuchKey",
                             &format!("The object for deletion does not exist: {key}"),
                         )
                     } else {
-                        HttpResponse::NoContent().finish()
+                        StatusCode::NO_CONTENT.into_response()
                     }
                 }
                 Err(e) => {
                     error!("Failed to delete object '{key}' from bucket '{bucket}': {e}");
                     xml_error_response(
-                        actix_web::http::StatusCode::INTERNAL_SERVER_ERROR,
+                        StatusCode::INTERNAL_SERVER_ERROR,
                         "InternalError",
                         &e.to_string(),
                     )
@@ -199,7 +204,7 @@ pub async fn delete_object(
         None => {
             warn!("Invalid bucket name attempted: {bucket}");
             xml_error_response(
-                actix_web::http::StatusCode::BAD_REQUEST,
+                StatusCode::BAD_REQUEST,
                 "InvalidBucketName",
                 &format!("Invalid bucket name attempted: {bucket}"),
             )
@@ -210,24 +215,22 @@ pub async fn delete_object(
 /// Get object metadata without returning the object data
 /// HEAD /{bucket}/{key}
 pub async fn head_object(
-    data: web::Data<AppState>,
-    path: web::Path<(String, String)>,
-) -> HttpResponse {
-    let (bucket, key) = path.into_inner();
-
-    let bucket = match validate_bucket(&bucket, &data.buckets) {
+    State(state): State<Arc<AppState>>,
+    Path((bucket, key)): Path<(String, String)>,
+) -> Response {
+    let bucket = match validate_bucket(&bucket, &state.buckets) {
         Ok(b) => b,
-        Err(resp) => return resp,
+        Err(resp) => return *resp,
     };
 
     info!("HEAD object '{key}' from bucket '{bucket}'");
-    let pool = &data.db_pool;
+    let pool = &state.db_pool;
     let conn = match pool.get() {
         Ok(conn) => conn,
         Err(e) => {
             error!("Failed to get database connection: {e}");
             return xml_error_response(
-                actix_web::http::StatusCode::INTERNAL_SERVER_ERROR,
+                StatusCode::INTERNAL_SERVER_ERROR,
                 "InternalError",
                 &format!("Database connection error: {e}"),
             );
@@ -249,21 +252,25 @@ pub async fn head_object(
                     let last_modified_datetime =
                         DateTime::<Utc>::from_timestamp(last_modified, 0).unwrap_or(Utc::now());
 
-                    HttpResponse::Ok()
-                        .insert_header(("Content-Length", size.to_string()))
-                        .insert_header(("Last-Modified", last_modified_datetime.to_rfc2822()))
-                        .insert_header(("ETag", format!("\"{}\"", md5_hash)))
-                        .finish()
+                    let mut headers = HeaderMap::new();
+                    headers.insert("Content-Length", size.to_string().parse().unwrap());
+                    headers.insert(
+                        "Last-Modified",
+                        last_modified_datetime.to_rfc2822().parse().unwrap(),
+                    );
+                    headers.insert("ETag", format!("\"{}\"", md5_hash).parse().unwrap());
+
+                    (StatusCode::OK, headers).into_response()
                 }
                 Err(rusqlite::Error::QueryReturnedNoRows) => xml_error_response(
-                    actix_web::http::StatusCode::NOT_FOUND,
+                    StatusCode::NOT_FOUND,
                     "NoSuchKey",
                     &format!("The object you requested does not exist: {key}"),
                 ),
                 Err(e) => {
                     error!("Failed to head object '{key}' from bucket '{bucket}': {e}");
                     xml_error_response(
-                        actix_web::http::StatusCode::INTERNAL_SERVER_ERROR,
+                        StatusCode::INTERNAL_SERVER_ERROR,
                         "InternalError",
                         &e.to_string(),
                     )
@@ -273,7 +280,7 @@ pub async fn head_object(
         None => {
             warn!("Invalid bucket name attempted: {bucket}");
             xml_error_response(
-                actix_web::http::StatusCode::BAD_REQUEST,
+                StatusCode::BAD_REQUEST,
                 "InvalidBucketName",
                 &format!("Invalid bucket name attempted: {bucket}"),
             )

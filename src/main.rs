@@ -1,7 +1,12 @@
-use actix_web::{App, HttpServer, web};
+use axum::{
+    Router,
+    routing::{delete, get, head, put},
+};
 use log::{info, warn};
-use std::collections::HashSet;
 use std::env;
+use std::sync::Arc;
+use std::{collections::HashSet, net::ToSocketAddrs};
+use tokio::net::TcpListener;
 
 mod handlers;
 mod models;
@@ -9,14 +14,18 @@ mod utils;
 
 use models::{AppConfig, AppState};
 
-#[actix_web::main]
+#[tokio::main]
 async fn main() -> std::io::Result<()> {
     // Parse command line argument for config file path
     let config_path = env::args().nth(1).unwrap_or("config.toml".to_string());
 
     // Read config file
-    let config = AppConfig::from_file(&config_path)
-        .unwrap_or_else(|_| panic!("Failed to read config file {config_path}"));
+    let config = AppConfig::from_file(&config_path).unwrap_or_else(|_| {
+        panic!(
+            "Failed to read config file
+ {config_path}"
+        )
+    });
 
     // Setup logging
     if let Err(e) = utils::initialize_logger(&config.log_path, &config.log_level) {
@@ -62,10 +71,7 @@ async fn main() -> std::io::Result<()> {
     utils::schedule_optimization(pool.clone());
 
     // Create shared application state
-    let data = web::Data::new(AppState {
-        db_pool: pool,
-        buckets: buckets_set,
-    });
+    let state = Arc::new(AppState::new(pool, buckets_set));
 
     let max_object_size = config.get_max_object_size();
     let max_workers = config.get_max_workers();
@@ -74,31 +80,31 @@ async fn main() -> std::io::Result<()> {
         config.bind_address, config.port, max_workers, max_object_size
     );
 
-    let server = HttpServer::new(move || {
-        App::new()
-            .app_data(web::PayloadConfig::new(max_object_size))
-            .app_data(data.clone())
-            // S3 ListBuckets API: GET /
-            .route("/", web::get().to(handlers::list_buckets))
-            // Path-style endpoints: /{bucket}/{key:.*} and /{bucket}
-            .route("/{bucket}", web::get().to(handlers::bucket_dispatch))
-            .route("/{bucket}/{key:.*}", web::put().to(handlers::upload_object))
-            .route(
-                "/{bucket}/{key:.*}",
-                web::get().to(handlers::download_object),
-            )
-            .route(
-                "/{bucket}/{key:.*}",
-                web::delete().to(handlers::delete_object),
-            )
-            .route("/{bucket}/{key:.*}", web::head().to(handlers::head_object))
-    })
-    .workers(max_workers)
-    .bind((config.bind_address.as_str(), config.port))?;
+    // Build our application with the routes
+    let app = Router::new()
+        // S3 ListBuckets API: GET /
+        .route("/", get(handlers::list_buckets))
+        // Path-style endpoints: /{bucket}/{key:.*} and /{bucket}
+        .route("/{bucket}", get(handlers::bucket_dispatch))
+        .route("/{bucket}/{*key}", put(handlers::upload_object))
+        .route("/{bucket}/{*key}", get(handlers::download_object))
+        .route("/{bucket}/{*key}", delete(handlers::delete_object))
+        .route("/{bucket}/{*key}", head(handlers::head_object))
+        .with_state(state);
+
+    // Create socket address
+    let addr = (config.bind_address.as_str(), config.port)
+        .to_socket_addrs()
+        .expect("Invalid socket address")
+        .next()
+        .unwrap();
 
     info!(
         "Server started successfully! Listening on {}:{}",
         config.bind_address, config.port
     );
-    server.run().await
+
+    // Start the server
+    let listener = TcpListener::bind(addr).await?;
+    axum::serve(listener, app).await
 }
