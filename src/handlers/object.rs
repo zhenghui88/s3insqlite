@@ -52,7 +52,7 @@ pub async fn upload_object(
                 Ok(mut stmt) => {
                     match stmt.execute(params![key, &body[..], md5_hash]) {
                         Ok(_) => {
-                            info!("Object '{key}' uploaded to bucket '{bucket}'");
+                            info!("Uploaded object '{key}' to bucket '{bucket}'");
                             // S3: 200 OK, no body required
                             StatusCode::OK.into_response()
                         }
@@ -118,6 +118,7 @@ pub async fn download_object(
             let sql = format!("SELECT data FROM {table_name} WHERE key = ?1");
             match conn.query_row(&sql, params![key], |row| row.get::<_, Vec<u8>>(0)) {
                 Ok(data) => {
+                    info!("Downloaded object '{key}' from bucket '{bucket}'");
                     let mut headers = HeaderMap::new();
                     headers.insert("Content-Type", "application/octet-stream".parse().unwrap());
                     headers.insert("Content-Length", data.len().to_string().parse().unwrap());
@@ -188,6 +189,7 @@ pub async fn delete_object(
                             &format!("The object for deletion does not exist: {key}"),
                         )
                     } else {
+                        info!("Deleted object '{key}' from bucket '{bucket}'");
                         StatusCode::NO_CONTENT.into_response()
                     }
                 }
