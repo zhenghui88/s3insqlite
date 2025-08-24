@@ -15,7 +15,7 @@ pub fn create_connection_pool(
     let manager = SqliteConnectionManager::file(db_path).with_init(|conn| {
         conn.execute_batch(
             "PRAGMA journal_mode = WAL;
-             PRAGMA synchronous = NORMAL;
+             PRAGMA synchronous = FULL;
              PRAGMA cache_size = 1000;
              PRAGMA foreign_keys = OFF;
              PRAGMA busy_timeout = 5000;",
