@@ -4,6 +4,7 @@ use std::collections::HashSet;
 
 #[derive(Debug, Serialize)]
 pub struct ListBucketResult {
+    /// Bucket name
     pub name: String,
     pub prefix: String,
     pub delimiter: Option<char>,
@@ -48,7 +49,7 @@ impl ListBucketResult {
         }
     }
 
-    pub fn to_xml(&self) -> String {
+    pub fn to_xml_v2(&self) -> String {
         let mut xml = String::from(
             "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<ListBucketResult xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\">",
         );
@@ -81,6 +82,60 @@ impl ListBucketResult {
 
         if let Some(ref start_after) = self.start_after {
             xml.push_str(&format!("<StartAfter>{}</StartAfter>", start_after));
+        }
+
+        // Add contents
+        for object in &self.contents {
+            xml.push_str("<Contents>");
+            xml.push_str(&format!("<Key>{}</Key>", object.key));
+            xml.push_str(&format!(
+                "<LastModified>{}</LastModified>",
+                object
+                    .last_modified
+                    .to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
+            ));
+            xml.push_str(&format!("<ETag>{}</ETag>", object.etag));
+            xml.push_str(&format!("<Size>{}</Size>", object.size));
+            xml.push_str(&format!(
+                "<StorageClass>{}</StorageClass>",
+                object.storage_class
+            ));
+            xml.push_str("</Contents>");
+        }
+
+        // Add common prefixes
+        for prefix in &self.common_prefixes {
+            xml.push_str("<CommonPrefixes>");
+            xml.push_str(&format!("<Prefix>{}</Prefix>", prefix.prefix));
+            xml.push_str("</CommonPrefixes>");
+        }
+
+        xml.push_str("</ListBucketResult>");
+        xml
+    }
+
+    /// S3 ListObjects v1 XML output
+    pub fn to_xml(&self) -> String {
+        let mut xml = String::from(
+            "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<ListBucketResult xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\">",
+        );
+
+        xml.push_str(&format!("<Name>{}</Name>", self.name));
+        xml.push_str(&format!("<Prefix>{}</Prefix>", self.prefix));
+
+        if let Some(delimiter) = self.delimiter {
+            xml.push_str(&format!("<Delimiter>{}</Delimiter>", delimiter));
+        }
+
+        xml.push_str(&format!("<MaxKeys>{}</MaxKeys>", self.max_keys));
+        xml.push_str(&format!("<IsTruncated>{}</IsTruncated>", self.is_truncated));
+
+        // v1: Marker and NextMarker
+        if let Some(ref marker) = self.continuation_token {
+            xml.push_str(&format!("<Marker>{}</Marker>", marker));
+        }
+        if let Some(ref next_marker) = self.next_continuation_token {
+            xml.push_str(&format!("<NextMarker>{}</NextMarker>", next_marker));
         }
 
         // Add contents

@@ -39,12 +39,77 @@ pub fn validate_bucket(
         );
 
         let mut headers = HeaderMap::new();
-        headers.insert("Content-Type", "text/xml".parse().unwrap());
+        headers.insert("Content-Type", "application/xml".parse().unwrap());
         headers.insert("Content-Length", body.len().to_string().parse().unwrap());
 
         Err(Box::new(
             (StatusCode::FORBIDDEN, headers, body).into_response(),
         ))
+    }
+}
+
+/// Query objects in a bucket with a prefix, returns Vec<(key, size, last_modified, md5)>
+type QueryBucketResult = Vec<(String, usize, chrono::DateTime<chrono::Utc>, Option<String>)>;
+
+pub fn query_bucket_objects(
+    conn: &rusqlite::Connection,
+    bucket: &str,
+    prefix: &str,
+) -> Result<QueryBucketResult, Box<Response>> {
+    let table_name = match sanitize_bucket_name(bucket) {
+        Some(t) => t,
+        None => {
+            return Err(Box::new(xml_error_response(
+                StatusCode::BAD_REQUEST,
+                "InvalidBucketName",
+                &format!("Invalid bucket name: {}", bucket),
+            )));
+        }
+    };
+
+    let mut stmt = match conn.prepare(&format!(
+        "SELECT key, length(data), last_modified, md5 FROM {table_name} WHERE key LIKE ?1",
+    )) {
+        Ok(stmt) => stmt,
+        Err(e) => {
+            return Err(Box::new(xml_error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "InternalError",
+                &format!("SQL preparation error: {}", e),
+            )));
+        }
+    };
+
+    let sql_params = rusqlite::params![format!("{prefix}%")];
+
+    let mut rows_vec = Vec::new();
+    let rows = stmt.query_map(sql_params, |row| {
+        let key: String = row.get(0)?;
+        let size: usize = row.get(1)?;
+        let last_modified_secs: i64 = row.get(2)?;
+        let md5_hash: Option<String> = row.get(3).ok();
+
+        let last_modified = chrono::DateTime::<chrono::Utc>::from_timestamp(last_modified_secs, 0)
+            .unwrap_or(chrono::Utc::now());
+
+        Ok((key, size, last_modified, md5_hash))
+    });
+
+    match rows {
+        Ok(rows) => {
+            for row in rows {
+                match row {
+                    Ok(data) => rows_vec.push(data),
+                    Err(_) => continue,
+                }
+            }
+            Ok(rows_vec)
+        }
+        Err(e) => Err(Box::new(xml_error_response(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "InternalError",
+            &format!("SQL query error: {}", e),
+        ))),
     }
 }
 
@@ -95,7 +160,7 @@ pub fn generate_xml_error(code: &str, message: &str) -> String {
 pub fn xml_error_response(status: StatusCode, code: &str, message: &str) -> Response {
     let body = generate_xml_error(code, message);
     let mut headers = HeaderMap::new();
-    headers.insert("Content-Type", "text/xml".parse().unwrap());
+    headers.insert("Content-Type", "application/xml".parse().unwrap());
     headers.insert("Content-Length", body.len().to_string().parse().unwrap());
 
     (status, headers, body).into_response()

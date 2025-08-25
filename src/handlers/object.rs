@@ -181,17 +181,9 @@ pub async fn delete_object(
         Some(table_name) => {
             let sql = format!("DELETE FROM {table_name} WHERE key = ?1");
             match conn.execute(&sql, params![key]) {
-                Ok(affected) => {
-                    if affected == 0 {
-                        xml_error_response(
-                            StatusCode::NOT_FOUND,
-                            "NoSuchKey",
-                            &format!("The object for deletion does not exist: {key}"),
-                        )
-                    } else {
-                        info!("Deleted object '{key}' from bucket '{bucket}'");
-                        StatusCode::NO_CONTENT.into_response()
-                    }
+                Ok(_) => {
+                    info!("Deleted object '{key}' from bucket '{bucket}'");
+                    StatusCode::NO_CONTENT.into_response()
                 }
                 Err(e) => {
                     error!("Failed to delete object '{key}' from bucket '{bucket}': {e}");

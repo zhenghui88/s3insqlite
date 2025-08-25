@@ -2,11 +2,12 @@ use axum::{
     Router,
     routing::{delete, get, head, put},
 };
-use log::{info, warn};
+use log::{error, info, warn};
 use std::env;
 use std::sync::Arc;
 use std::{collections::HashSet, net::ToSocketAddrs};
 use tokio::net::TcpListener;
+use tower_http::trace::TraceLayer;
 
 mod handlers;
 mod models;
@@ -20,12 +21,8 @@ async fn main() -> std::io::Result<()> {
     let config_path = env::args().nth(1).unwrap_or("config.toml".to_string());
 
     // Read config file
-    let config = AppConfig::from_file(&config_path).unwrap_or_else(|_| {
-        panic!(
-            "Failed to read config file
- {config_path}"
-        )
-    });
+    let config = AppConfig::from_file(&config_path)
+        .unwrap_or_else(|_| panic!("Failed to read config file {config_path}"));
 
     // Setup logging
     if let Err(e) = utils::initialize_logger(&config.log_path, &config.log_level) {
@@ -85,12 +82,39 @@ async fn main() -> std::io::Result<()> {
         // S3 ListBuckets API: GET /
         .route("/", get(handlers::list_buckets))
         // Path-style endpoints: /{bucket}/{key:.*} and /{bucket}
-        .route("/{bucket}", get(handlers::bucket_dispatch))
+        .route("/{bucket}", get(handlers::get_bucket_dispatch))
+        .route("/{bucket}/", get(handlers::get_bucket_dispatch))
         .route("/{bucket}/{*key}", put(handlers::upload_object))
         .route("/{bucket}/{*key}", get(handlers::download_object))
         .route("/{bucket}/{*key}", delete(handlers::delete_object))
         .route("/{bucket}/{*key}", head(handlers::head_object))
-        .with_state(state);
+        // Catch-all route for debugging unmatched requests
+        .fallback(|req: axum::http::Request<axum::body::Body>| async move {
+            use axum::{http::StatusCode, response::IntoResponse};
+            let uri = req.uri().to_string();
+            let method = req.method().to_string();
+            error!("Fallback route hit for method: {} URI: {}", method, uri);
+            (StatusCode::NOT_IMPLEMENTED, "").into_response()
+        })
+        .with_state(state)
+        .layer(
+            TraceLayer::new_for_http()
+                .on_request(|req: &axum::http::Request<_>, _span: &tracing::Span| {
+                    tracing::debug!(
+                        "Incoming request: {} {}, headers: {:?}",
+                        req.method(),
+                        req.uri(),
+                        req.headers()
+                    );
+                })
+                .on_response(
+                    |response: &axum::http::Response<_>,
+                     _latency: std::time::Duration,
+                     _span: &tracing::Span| {
+                        tracing::debug!("Response: {:?}", response);
+                    },
+                ),
+        );
 
     // Create socket address
     let addr = (config.bind_address.as_str(), config.port)

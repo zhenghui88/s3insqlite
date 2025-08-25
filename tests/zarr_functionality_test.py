@@ -69,6 +69,6 @@ def list_test():
 
 
 if __name__ == "__main__":
-    # write_read_test()
+    write_read_test()
     write_overwrite_read_test()
     list_test()

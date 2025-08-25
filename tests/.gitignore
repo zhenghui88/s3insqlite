@@ -1,6 +1,6 @@
 data/
-mc
-minio
-rustfs
 database.sqlite
 log.txt
+rustfs*
+minio*
+mc
