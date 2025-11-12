@@ -34,9 +34,9 @@ async fn benchmark_write(
         let data = random_array(shape);
 
         let array = ArrayBuilder::new(
-            data.shape().iter().map(|x| *x as u64).collect(),
+            data.shape().iter().map(|x| *x as u64).collect::<Vec<u64>>(),
+            [shape.0 as u64, shape.1 as u64],
             DataType::Float32,
-            vec![shape.0 as u64, shape.1 as u64].try_into().unwrap(),
             FillValue::from(ZARR_NAN_F32),
         )
         .bytes_to_bytes_codecs(vec![Arc::new(ZstdCodec::new(3, true))])
@@ -49,7 +49,13 @@ async fn benchmark_write(
             .expect("Failed to store metadata");
 
         array
-            .async_store_array_subset_ndarray(&[0, 0], data)
+            .async_store_array_subset_elements(
+                &zarrs::array_subset::ArraySubset::new_with_shape(vec![
+                    shape.0 as u64,
+                    shape.1 as u64,
+                ]),
+                data.as_slice().unwrap(),
+            )
             .await
             .expect("Failed to write data to Zarr array");
 
@@ -83,14 +89,13 @@ async fn benchmark_read(
             .await
             .expect("Failed to open array for reading");
 
-        let read_data = array
-            .async_retrieve_array_subset_ndarray::<f32>(&array.subset_all())
+        let read_elements = array
+            .async_retrieve_array_subset_elements::<f32>(&array.subset_all())
             .await
             .expect("Failed to read data");
 
-        let read_data = read_data
-            .into_dimensionality::<ndarray::Ix2>()
-            .expect("Failed to convert to 2D array");
+        let read_data =
+            Array2::from_shape_vec(shape, read_elements).expect("Failed to convert to 2D array");
 
         assert_eq!(
             read_data.shape(),
