@@ -33,6 +33,6 @@ tracing-subscriber = "0.3"
 [dev-dependencies]
 ndarray = { version = "0.17" }
 rand = { version = "0.9" }
-opendal = { version = "0.54", features = ["services-s3"] }
+opendal = { version = "0.55", features = ["services-s3"] }
 zarrs = { version = "0.22", features = ["zstd", "async"] }
-zarrs_opendal = { version = "0.9" }
+zarrs_opendal = { version = "0.10" }
