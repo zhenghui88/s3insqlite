@@ -85,14 +85,19 @@ pub fn query_bucket_objects(
     let mut rows_vec = Vec::new();
     let rows = stmt.query_map(sql_params, |row| {
         let key: String = row.get(0)?;
-        let size: usize = row.get(1)?;
+        let size: isize = row.get(1)?;
         let last_modified_secs: i64 = row.get(2)?;
         let md5_hash: Option<String> = row.get(3).ok();
 
         let last_modified = chrono::DateTime::<chrono::Utc>::from_timestamp(last_modified_secs, 0)
             .unwrap_or(chrono::Utc::now());
 
-        Ok((key, size, last_modified, md5_hash))
+        Ok((
+            key,
+            size.try_into().expect("unexpected negative length(data)"),
+            last_modified,
+            md5_hash,
+        ))
     });
 
     match rows {
