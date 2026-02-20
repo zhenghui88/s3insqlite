@@ -4,7 +4,7 @@ use opendal::Operator;
 use opendal::services;
 use std::sync::Arc;
 use zarrs::array::codec::ZstdCodec;
-use zarrs::array::{ArrayBuilder, DataType, FillValue, ZARR_NAN_F32};
+use zarrs::array::{ArrayBuilder, ArraySubset, FillValue, ZARR_NAN_F32, data_type};
 use zarrs::storage::AsyncReadableWritableListableStorage;
 use zarrs_opendal::AsyncOpendalStore;
 
@@ -43,9 +43,9 @@ async fn test_zarrs_s3_write_read() {
         Array2::from_shape_vec((10, 10), (0..100).map(|x| x as f32).collect()).unwrap();
 
     let array = ArrayBuilder::new(
-        data.shape().iter().map(|x| *x as u64).collect::<Vec<u64>>(), // array shape
+        data.shape().iter().map(|x| *x as u64).collect::<Vec<_>>(), // array shape
         [10, 10], // regular chunk shape (non-zero elements)
-        DataType::Float32,
+        data_type::float32(),
         FillValue::from(ZARR_NAN_F32),
     )
     .bytes_to_bytes_codecs(vec![Arc::new(ZstdCodec::new(3, true))])
@@ -58,8 +58,8 @@ async fn test_zarrs_s3_write_read() {
         .expect("Failed to store metadata");
 
     array
-        .async_store_array_subset_elements(
-            &zarrs::array_subset::ArraySubset::new_with_shape(vec![10, 10]),
+        .async_store_array_subset(
+            &ArraySubset::new_with_shape(vec![10, 10]),
             data.as_slice().unwrap(),
         )
         .await
@@ -67,7 +67,7 @@ async fn test_zarrs_s3_write_read() {
 
     // --- Read back the array ---
     let read_elements = array
-        .async_retrieve_array_subset_elements::<f32>(&array.subset_all())
+        .async_retrieve_array_subset::<Vec<f32>>(&array.subset_all())
         .await
         .expect("Failed to read data");
 

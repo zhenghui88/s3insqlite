@@ -3,11 +3,11 @@ mod common;
 use ndarray::Array2;
 use opendal::Operator;
 use opendal::services;
-use rand::Rng;
+use rand::RngExt;
 use std::sync::Arc;
 use std::time::Instant;
 use zarrs::array::codec::ZstdCodec;
-use zarrs::array::{ArrayBuilder, DataType, FillValue, ZARR_NAN_F32};
+use zarrs::array::{ArrayBuilder, ArraySubset, FillValue, ZARR_NAN_F32, data_type};
 use zarrs::storage::AsyncReadableWritableListableStorage;
 use zarrs_opendal::AsyncOpendalStore;
 
@@ -34,9 +34,9 @@ async fn benchmark_write(
         let data = random_array(shape);
 
         let array = ArrayBuilder::new(
-            data.shape().iter().map(|x| *x as u64).collect::<Vec<u64>>(),
+            data.shape().iter().map(|x| *x as u64).collect::<Vec<_>>(),
             [shape.0 as u64, shape.1 as u64],
-            DataType::Float32,
+            data_type::float32(),
             FillValue::from(ZARR_NAN_F32),
         )
         .bytes_to_bytes_codecs(vec![Arc::new(ZstdCodec::new(3, true))])
@@ -49,11 +49,8 @@ async fn benchmark_write(
             .expect("Failed to store metadata");
 
         array
-            .async_store_array_subset_elements(
-                &zarrs::array_subset::ArraySubset::new_with_shape(vec![
-                    shape.0 as u64,
-                    shape.1 as u64,
-                ]),
+            .async_store_array_subset(
+                &ArraySubset::new_with_shape(vec![shape.0 as u64, shape.1 as u64]),
                 data.as_slice().unwrap(),
             )
             .await
@@ -90,7 +87,7 @@ async fn benchmark_read(
             .expect("Failed to open array for reading");
 
         let read_elements = array
-            .async_retrieve_array_subset_elements::<f32>(&array.subset_all())
+            .async_retrieve_array_subset::<Vec<f32>>(&array.subset_all())
             .await
             .expect("Failed to read data");
 

@@ -1,7 +1,7 @@
 mod common;
 use opendal::Operator;
 use opendal::services;
-use rand::Rng;
+use rand::RngExt;
 
 #[tokio::test]
 async fn test_connection() {

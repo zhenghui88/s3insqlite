@@ -1,7 +1,7 @@
 mod common;
 use opendal::Operator;
 use opendal::services;
-use rand::RngCore;
+use rand::Rng;
 use std::time::Instant;
 
 const ACCESS_KEY_ID: &str = "minioadmin";
